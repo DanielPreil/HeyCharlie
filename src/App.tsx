@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { DaschundySprite } from "./DaschundySprite";
 import "./App.css";
 
 function App() {
@@ -10,8 +11,11 @@ function App() {
   };
 
   return (
-    <div onMouseDown={handleMouseDown} style={{ width: "100vw", height: "100vh", userSelect: "none" }} >
-      <main><h1>Hey Charlie</h1></main>
+    <div onMouseDown={handleMouseDown} className="h-screen v-screen select-none" >
+      <main>
+        <h1>Hey Charlie</h1>
+        <DaschundySprite />
+      </main>
     </div>
   )
 }
