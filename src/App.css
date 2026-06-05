@@ -1,0 +1,21 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body {
+  height: 100%;
+}
+
+:root {
+  border: 2px solid #6E260E;
+  color: white;
+}
