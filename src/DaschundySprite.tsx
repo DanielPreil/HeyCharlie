@@ -4,58 +4,55 @@ import grabSheet from "./sprites/grab.json";
 import moveSprite from "./sprites/walk.png";
 import grabSprite from "./sprites/grab.png";
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-
 const SCALE = 8;
 const MOVE_SPEED = 2;
 const GRAVITY = 0.5;
 const MOVE_SCALE = 0.75;
 const GRAB_SCALE = 0.65;
 
-// ─── Frame data ───────────────────────────────────────────────────────────────
-
 type Frame = { x: number; y: number; w: number; h: number; duration: number };
-
 type SpriteSheet = { frames: { frame: { x: number; y: number; w: number; h: number }; duration: number }[] };
 
 const parseFrames = (sheet: SpriteSheet): Frame[] =>
-  sheet.frames.map((f) => ({
-    x: f.frame.x,
-    y: f.frame.y,
-    w: f.frame.w,
-    h: f.frame.h,
-    duration: f.duration,
-  }));
+  sheet.frames.map((f) => ({ x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h, duration: f.duration }));
 
 const MOVE_FRAMES = parseFrames(moveSheet);
 const GRAB_FRAMES = parseFrames(grabSheet);
 
-// ─── Canvas geometry ──────────────────────────────────────────────────────────
+const MOVE_W = MOVE_FRAMES[0].w * SCALE;
+const MOVE_H = MOVE_FRAMES[0].h * SCALE;
+const GRAB_W = GRAB_FRAMES[0].w * SCALE;
+const GRAB_H = GRAB_FRAMES[0].h * SCALE;
 
-const MOVE_W = MOVE_FRAMES[0].w * SCALE; // 216px
-const MOVE_H = MOVE_FRAMES[0].h * SCALE; // 144px
-const GRAB_W = GRAB_FRAMES[0].w * SCALE; // 160px
-const GRAB_H = GRAB_FRAMES[0].h * SCALE; // 280px
+const CANVAS_W = Math.max(MOVE_W, GRAB_W);
+const CANVAS_H = Math.max(MOVE_H, GRAB_H);
+const CANVAS_CY = CANVAS_H / 2;
 
-const CANVAS_W = Math.max(MOVE_W, GRAB_W); // 216px
-const CANVAS_H = Math.max(MOVE_H, GRAB_H); // 280px
-const CANVAS_CY = CANVAS_H / 2; // 140px
+const MOVE_OFFSET = { x: Math.floor((CANVAS_W - MOVE_W) / 2), y: CANVAS_H - MOVE_H };
+const GRAB_OFFSET = { x: Math.floor((CANVAS_W - GRAB_W) / 2), y: 0 };
 
-const MOVE_OFFSET = { x: Math.floor((CANVAS_W - MOVE_W) / 2), y: CANVAS_H - MOVE_H }; // {0, 136}
-const GRAB_OFFSET = { x: Math.floor((CANVAS_W - GRAB_W) / 2), y: 0 }; // {28, 0}
-
-// Visual bottom of walk sprite after CSS scale(MOVE_SCALE) around canvas center
 const groundY = () => Math.round(window.innerHeight - CANVAS_CY * (1 + MOVE_SCALE));
+const GRAB_SHIFT_Y = Math.round(
+  MOVE_SCALE * (MOVE_OFFSET.y + MOVE_H / 2 - CANVAS_CY) -
+    GRAB_SCALE * (GRAB_OFFSET.y + GRAB_H / 2 - CANVAS_CY)
+);
 
-// posY shift walk→grab so sprites appear at same viewport position
-const GRAB_SHIFT_Y = Math.round(MOVE_SCALE * (MOVE_OFFSET.y + MOVE_H / 2 - CANVAS_CY) - GRAB_SCALE * (GRAB_OFFSET.y + GRAB_H / 2 - CANVAS_CY)); // ≈ 51px
+type Mode = "move" | "grab" | "falling" | "idle";
 
-// ─── Component ────────────────────────────────────────────────────────────────
+interface Props {
+  isTyping: boolean;
+  onPositionChange: (x: number, y: number) => void;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+}
 
-type Mode = "move" | "grab" | "falling";
-
-export function DaschundySprite() {
+export function DaschundySprite({ isTyping, onPositionChange, onDragStart, onDragEnd }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const isTypingRef = useRef(isTyping);
+
+  useEffect(() => {
+    isTypingRef.current = isTyping;
+  }, [isTyping]);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -72,12 +69,10 @@ export function DaschundySprite() {
     const moveImg = Object.assign(new Image(), { src: moveSprite });
     const grabImg = Object.assign(new Image(), { src: grabSprite });
 
-    // ─── State ──────────────────────────────────────────────────────────────
-
     let mode: Mode = "move";
     let posX = 0;
     let posY = groundY();
-    let moveDir = 1; // 1 = right, -1 = left
+    let moveDir = 1;
     let frameIdx = 0;
     let lastFrame = 0;
     let velY = 0;
@@ -87,8 +82,6 @@ export function DaschundySprite() {
     let grabX = 0;
     let grabY = 0;
 
-    // ─── Helpers ────────────────────────────────────────────────────────────
-
     const setTransform = (scale: number) => {
       canvas.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
     };
@@ -97,8 +90,6 @@ export function DaschundySprite() {
       frameIdx = 0;
       lastFrame = t;
     };
-
-    // ─── Input ──────────────────────────────────────────────────────────────
 
     const onMouseDown = (e: MouseEvent) => {
       e.stopPropagation();
@@ -110,6 +101,7 @@ export function DaschundySprite() {
       resetFrame();
       setTransform(GRAB_SCALE);
       canvas.style.cursor = "grabbing";
+      onDragStart?.();
     };
 
     const onMouseMove = (e: MouseEvent) => {
@@ -132,26 +124,32 @@ export function DaschundySprite() {
         setTransform(GRAB_SCALE);
       }
       canvas.style.cursor = "grab";
+      onDragEnd?.();
     };
 
     canvas.addEventListener("mousedown", onMouseDown);
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
 
-    // ─── Render loop ─────────────────────────────────────────────────────────
-
     const render = (t: number) => {
+      const typing = isTypingRef.current;
+
+      if (mode === "move" && typing) {
+        mode = "idle";
+        frameIdx = 0;
+      } else if (mode === "idle" && !typing) {
+        mode = "move";
+        resetFrame(t);
+      }
+
       if (mode === "move") {
         posX += MOVE_SPEED * moveDir;
         const maxX = window.innerWidth - CANVAS_W;
-        if (posX >= maxX) {
-          posX = maxX;
-          moveDir = -1;
-        }
-        if (posX <= 0) {
-          posX = 0;
-          moveDir = 1;
-        }
+        if (posX >= maxX) { posX = maxX; moveDir = -1; }
+        if (posX <= 0) { posX = 0; moveDir = 1; }
+        posY = groundY();
+        setTransform(MOVE_SCALE);
+      } else if (mode === "idle") {
         posY = groundY();
         setTransform(MOVE_SCALE);
       } else if (mode === "falling") {
@@ -159,7 +157,7 @@ export function DaschundySprite() {
         posY += velY;
         if (posY >= groundY()) {
           posY = groundY();
-          mode = "move";
+          mode = typing ? "idle" : "move";
           resetFrame(t);
           setTransform(MOVE_SCALE);
         } else {
@@ -169,11 +167,16 @@ export function DaschundySprite() {
         setTransform(GRAB_SCALE);
       }
 
-      const isMove = mode === "move";
+      onPositionChange(posX, posY);
+
+      const isMove = mode === "move" || mode === "idle";
       const frames = isMove ? MOVE_FRAMES : GRAB_FRAMES;
       const img = isMove ? moveImg : grabImg;
       const offset = isMove ? MOVE_OFFSET : GRAB_OFFSET;
-      const frame = frames[frameIdx % frames.length];
+
+      // freeze on frame 0 when idle
+      const currentIdx = mode === "idle" ? 0 : frameIdx % frames.length;
+      const frame = frames[currentIdx];
       const sw = frame.w * SCALE;
       const sh = frame.h * SCALE;
 
@@ -189,7 +192,7 @@ export function DaschundySprite() {
         ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, offset.x, offset.y, sw, sh);
       }
 
-      if (t - lastFrame >= frame.duration) {
+      if (mode !== "idle" && t - lastFrame >= frame.duration) {
         frameIdx = (frameIdx + 1) % frames.length;
         lastFrame = t;
       }
@@ -198,12 +201,8 @@ export function DaschundySprite() {
     };
 
     Promise.all([
-      new Promise<void>((res) => {
-        moveImg.onload = () => res();
-      }),
-      new Promise<void>((res) => {
-        grabImg.onload = () => res();
-      }),
+      new Promise<void>((res) => { moveImg.onload = () => res(); }),
+      new Promise<void>((res) => { grabImg.onload = () => res(); }),
     ]).then(() => {
       rafId = requestAnimationFrame(render);
     });
@@ -216,5 +215,11 @@ export function DaschundySprite() {
     };
   }, []);
 
-  return <canvas ref={canvasRef} onMouseDown={(e) => e.stopPropagation()} style={{ position: "fixed", top: 0, left: 0, cursor: "grab", zIndex: 9999 }} />;
+  return (
+    <canvas
+      ref={canvasRef}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{ position: "fixed", top: 0, left: 0, cursor: "grab", zIndex: 9999, pointerEvents: "auto" }}
+    />
+  );
 }
