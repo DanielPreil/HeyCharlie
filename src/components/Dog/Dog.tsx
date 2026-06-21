@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { charlieConfig, parseFrames } from "../../characters/charlie/config";
 import type { DogState } from "./dogStates";
 
@@ -33,7 +34,7 @@ const GRAB_SHIFT_Y = Math.round(
 
 const MOVE_SPEED = 2;
 const GRAVITY = 0.5;
-const groundY = () => Math.round(window.innerHeight - CCY * (1 + scales.walk));
+const screenGroundY = () => Math.round(window.innerHeight - CCY * (1 + scales.walk));
 
 // ─── Props ─────────────────────────────────────────────────────────────────
 
@@ -80,10 +81,22 @@ export function Dog({ isTyping, keyPressCount, onPositionChange, onDragStart, on
     ctx.imageSmoothingEnabled = false;
     ctx.scale(dpr, dpr);
 
+    // Constrained window: when dog is dropped into another app's window
+    let constrainedBounds: { x: number; y: number; w: number; h: number } | null = null;
+
+    // Physics bounds — switch to window bounds when constrained
+    const getGroundY = () => constrainedBounds
+      ? Math.round(constrainedBounds.y + constrainedBounds.h - CCY * (1 + scales.walk))
+      : screenGroundY();
+    const getMinX = () => constrainedBounds?.x ?? 0;
+    const getMaxX = () => constrainedBounds
+      ? constrainedBounds.x + constrainedBounds.w - CW
+      : window.innerWidth - CW;
+
     // Physics state
     let state: DogState = "walk";
     let posX = 0;
-    let posY = groundY();
+    let posY = getGroundY();
     let dir: 1 | -1 = 1;
     let velY = 0;
     let isDragging = false;
@@ -178,10 +191,11 @@ export function Dog({ isTyping, keyPressCount, onPositionChange, onDragStart, on
       // Physics + transform
       if (state === "walk") {
         posX += MOVE_SPEED * dir;
-        const maxX = window.innerWidth - CW;
+        const maxX = getMaxX();
+        const minX = getMinX();
         if (posX >= maxX) { posX = maxX; dir = -1; }
-        if (posX <= 0) { posX = 0; dir = 1; }
-        posY = groundY();
+        if (posX <= minX) { posX = minX; dir = 1; }
+        posY = getGroundY();
         setTransform(scales.walk);
       } else if (state === "typing") {
         // Detect new keypresses → update speed, trigger or queue a swing
@@ -211,16 +225,16 @@ export function Dog({ isTyping, keyPressCount, onPositionChange, onDragStart, on
           }
         }
 
-        posY = groundY();
+        posY = getGroundY();
         setTransform(scales.typing);
       } else if (state === "idle") {
-        posY = groundY();
+        posY = getGroundY();
         setTransform(scales.idle);
       } else if (state === "falling") {
         velY += GRAVITY;
         posY += velY;
-        if (posY >= groundY()) {
-          posY = groundY();
+        if (posY >= getGroundY()) {
+          posY = getGroundY();
           if (typing) {
             state = "typing";
             resetTyping(t);
@@ -279,15 +293,34 @@ export function Dog({ isTyping, keyPressCount, onPositionChange, onDragStart, on
       if (!isDragging) return;
       isDragging = false;
       frameIdx = 0;
-      if (posY >= groundY()) {
+      if (posY >= getGroundY()) {
         state = "walk";
-        posY = groundY();
+        posY = getGroundY();
       } else {
         state = "falling";
         velY = 0;
       }
       canvas.style.cursor = "grab";
       onDragEnd();
+
+      // Detect which window the dog was dropped into.
+      // Use the dog's visual center as the probe point.
+      const probeX = posX + CW / 2;
+      const probeY = posY + CH * scales.grab;
+      invoke<[number, number, number, number] | null>("get_window_at_position", {
+        x: probeX,
+        y: probeY,
+      }).then((result) => {
+        if (result) {
+          const [bx, by, bw, bh] = result;
+          // Require the window to be large enough to walk in
+          const minW = CW * scales.walk * 1.5;
+          const minH = CH * scales.walk * 1.5;
+          constrainedBounds = bw >= minW && bh >= minH ? { x: bx, y: by, w: bw, h: bh } : null;
+        } else {
+          constrainedBounds = null; // dropped on desktop → back to full-screen
+        }
+      }).catch(() => { constrainedBounds = null; });
     };
 
     canvas.addEventListener("mousedown", onMouseDown);

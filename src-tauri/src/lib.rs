@@ -6,6 +6,105 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 
+// ── Window detection via CGWindowList (macOS only) ────────────────────────
+#[cfg(target_os = "macos")]
+mod cg_windows {
+    use std::os::raw::c_void;
+
+    type CFArrayRef = *const c_void;
+    type CFTypeRef  = *const c_void;
+
+    #[repr(C)] struct CGPoint  { x: f64, y: f64 }
+    #[repr(C)] struct CGSize   { width: f64, height: f64 }
+    #[repr(C)] struct CGRect   { origin: CGPoint, size: CGSize }
+
+    const ON_SCREEN_ONLY:    u32 = 1;
+    const EXCLUDE_DESKTOP:   u32 = 1 << 4;
+    const CF_NUMBER_SINT32:  i32 = 3;
+    const MIN_WINDOW_PX:     f64 = 200.0;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        static kCGWindowBounds:   CFTypeRef;
+        static kCGWindowOwnerPID: CFTypeRef;
+        static kCGWindowLayer:    CFTypeRef;
+        fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> CFArrayRef;
+        fn CGRectMakeWithDictionaryRepresentation(dict: CFTypeRef, out: *mut CGRect) -> bool;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFArrayGetCount(arr: CFArrayRef) -> isize;
+        fn CFArrayGetValueAtIndex(arr: CFArrayRef, idx: isize) -> CFTypeRef;
+        fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
+        fn CFNumberGetValue(num: CFTypeRef, typ: i32, out: *mut c_void) -> bool;
+        fn CFRelease(cf: CFTypeRef);
+    }
+
+    /// Returns [x, y, width, height] (in logical/CSS pixels, top-left origin) of the
+    /// topmost normal window at screen point (x, y), excluding our own process.
+    pub fn find_window_at(x: f64, y: f64, own_pid: u32) -> Option<[f64; 4]> {
+        unsafe {
+            let list = CGWindowListCopyWindowInfo(ON_SCREEN_ONLY | EXCLUDE_DESKTOP, 0);
+            if list.is_null() { return None; }
+
+            let n = CFArrayGetCount(list);
+            let mut found: Option<[f64; 4]> = None;
+
+            for i in 0..n {
+                let info = CFArrayGetValueAtIndex(list, i);
+                if info.is_null() { continue; }
+
+                // Skip our own process
+                let pid_ref = CFDictionaryGetValue(info, kCGWindowOwnerPID);
+                if !pid_ref.is_null() {
+                    let mut pid: i32 = 0;
+                    CFNumberGetValue(pid_ref, CF_NUMBER_SINT32, &mut pid as *mut _ as _);
+                    if pid as u32 == own_pid { continue; }
+                }
+
+                // Skip desktop (negative layers), menu bar / dock (layer > 5)
+                let layer_ref = CFDictionaryGetValue(info, kCGWindowLayer);
+                if !layer_ref.is_null() {
+                    let mut layer: i32 = 0;
+                    CFNumberGetValue(layer_ref, CF_NUMBER_SINT32, &mut layer as *mut _ as _);
+                    if layer < 0 || layer > 5 { continue; }
+                }
+
+                // Get window bounds (points = logical pixels, top-left origin)
+                let bounds = CFDictionaryGetValue(info, kCGWindowBounds);
+                if bounds.is_null() { continue; }
+
+                let mut rect = CGRect {
+                    origin: CGPoint { x: 0.0, y: 0.0 },
+                    size:   CGSize  { width: 0.0, height: 0.0 },
+                };
+                if !CGRectMakeWithDictionaryRepresentation(bounds, &mut rect) { continue; }
+
+                let (bx, by, bw, bh) = (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+
+                if bw < MIN_WINDOW_PX || bh < MIN_WINDOW_PX { continue; }
+
+                if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
+                    found = Some([bx, by, bw, bh]);
+                    break;
+                }
+            }
+
+            CFRelease(list);
+            found
+        }
+    }
+}
+
+#[tauri::command]
+fn get_window_at_position(x: f64, y: f64) -> Option<[f64; 4]> {
+    #[cfg(target_os = "macos")]
+    { cg_windows::find_window_at(x, y, std::process::id()) }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = (x, y); None }
+}
+
 // Returns None for keys we don't want to show (modifiers etc.)
 fn special_key_label(key: &Key) -> Option<String> {
     let s = match key {
@@ -172,6 +271,7 @@ fn start_input_listener(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![get_window_at_position])
         .setup(|app| {
             // Remove from Cmd+Tab switcher and Dock — heycharlie is a background overlay,
             // not a regular app. Tray icon still works with Accessory policy.
