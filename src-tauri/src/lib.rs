@@ -2,6 +2,8 @@ use rdev::{listen, Event, EventType, Key};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 
 // Returns None for keys we don't want to show (modifiers etc.)
@@ -43,11 +45,30 @@ fn special_key_label(key: &Key) -> Option<String> {
     Some(s.to_string())
 }
 
-// Prefer event.name (OS keyboard-layout-aware) for printable chars.
-// Fall back to special_key_label for function/modifier/arrow keys.
+// Physical key → label fallback for when modifiers suppress the unicode char.
+// Cmd+C on macOS gives unicode \x03 (control char) — this recovers "C".
+fn key_char(key: &Key) -> Option<&'static str> {
+    match key {
+        Key::KeyA => Some("A"), Key::KeyB => Some("B"), Key::KeyC => Some("C"),
+        Key::KeyD => Some("D"), Key::KeyE => Some("E"), Key::KeyF => Some("F"),
+        Key::KeyG => Some("G"), Key::KeyH => Some("H"), Key::KeyI => Some("I"),
+        Key::KeyJ => Some("J"), Key::KeyK => Some("K"), Key::KeyL => Some("L"),
+        Key::KeyM => Some("M"), Key::KeyN => Some("N"), Key::KeyO => Some("O"),
+        Key::KeyP => Some("P"), Key::KeyQ => Some("Q"), Key::KeyR => Some("R"),
+        Key::KeyS => Some("S"), Key::KeyT => Some("T"), Key::KeyU => Some("U"),
+        Key::KeyV => Some("V"), Key::KeyW => Some("W"), Key::KeyX => Some("X"),
+        Key::KeyY => Some("Y"), Key::KeyZ => Some("Z"),
+        Key::Num0 => Some("0"), Key::Num1 => Some("1"), Key::Num2 => Some("2"),
+        Key::Num3 => Some("3"), Key::Num4 => Some("4"), Key::Num5 => Some("5"),
+        Key::Num6 => Some("6"), Key::Num7 => Some("7"), Key::Num8 => Some("8"),
+        Key::Num9 => Some("9"),
+        _ => None,
+    }
+}
+
 fn event_label(event: &Event) -> Option<String> {
     if let EventType::KeyPress(ref key) = event.event_type {
-        // Use OS-provided char (respects QWERTZ, AZERTY, etc.)
+        // OS-provided char (respects QWERTZ, AZERTY, etc.) — works for normal typing
         if let Some(ref uni) = event.unicode {
             if let Some(ref name) = uni.name {
                 let ch = name.trim();
@@ -56,7 +77,12 @@ fn event_label(event: &Event) -> Option<String> {
                 }
             }
         }
-        // Special / non-printable keys
+        // Modifier held (e.g. Cmd+C) → unicode becomes a control char and is filtered above.
+        // Recover the letter/digit from the physical key enum.
+        if let Some(label) = key_char(key) {
+            return Some(label.to_string());
+        }
+        // Arrows, F-keys, special keys
         return special_key_label(key);
     }
     None
@@ -114,6 +140,18 @@ fn start_input_listener(app: AppHandle) {
                     app.emit("key-press", label).ok();
                 }
             }
+            EventType::KeyRelease(ref key) => {
+                // Only emit release for modifier keys so frontend can track combos
+                if let Some(label) = special_key_label(key) {
+                    let is_modifier = matches!(
+                        label.as_str(),
+                        "Shift" | "Ctrl" | "Alt" | "Cmd"
+                    );
+                    if is_modifier {
+                        app.emit("key-release", label).ok();
+                    }
+                }
+            }
             EventType::MouseMove { x, y } => {
                 let now = now_ms();
                 let last = LAST_MOUSE_MS.load(Ordering::Relaxed);
@@ -135,6 +173,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Remove from Cmd+Tab switcher and Dock — heycharlie is a background overlay,
+            // not a regular app. Tray icon still works with Accessory policy.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let win = app.get_webview_window("main").unwrap();
             // resize window to actual primary monitor size (avoids using fullscreen mode)
             if let Ok(Some(monitor)) = win.current_monitor() {
@@ -151,6 +194,19 @@ pub fn run() {
                 }))
                 .ok();
             }
+            // System tray: right-click → Quit
+            let quit = MenuItem::with_id(app, "quit", "Quit heycharlie", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&quit])?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    if event.id().as_ref() == "quit" {
+                        app.exit(0);
+                    }
+                })
+                .build(app)?;
+
             start_input_listener(app.handle().clone());
             Ok(())
         })
