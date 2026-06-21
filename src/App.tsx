@@ -9,7 +9,7 @@ import "./App.css";
 const { canvasSize } = charlieConfig;
 
 export default function App() {
-  const { combos, isTyping } = useKeyMonitor();
+  const { combos, isTyping, keyPressCount } = useKeyMonitor();
   const { updateDogPosition, onDragStart, onDragEnd } = useClickThrough(
     canvasSize.w,
     canvasSize.h
@@ -37,6 +37,7 @@ export default function App() {
     <div className="h-screen w-screen select-none" style={{ pointerEvents: "none" }}>
       <Dog
         isTyping={isTyping}
+        keyPressCount={keyPressCount}
         onPositionChange={handlePositionChange}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}

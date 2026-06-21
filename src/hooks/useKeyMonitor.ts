@@ -12,6 +12,7 @@ export type KeyCombo = string[];
 export function useKeyMonitor() {
   const [combos, setCombos] = useState<KeyCombo[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [keyPressCount, setKeyPressCount] = useState(0);
   const activeModifiers = useRef<Set<string>>(new Set());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasGlobal = useRef(false);
@@ -32,6 +33,7 @@ export function useKeyMonitor() {
 
       const combo: KeyCombo = [...activeModifiers.current, key];
       setIsTyping(true);
+      setKeyPressCount((c) => c + 1);
       setCombos((prev) => [...prev.slice(-(MAX_COMBOS - 1)), combo]);
 
       if (timer.current) clearTimeout(timer.current);
@@ -84,7 +86,7 @@ export function useKeyMonitor() {
     };
   }, [onKeyPress, onModifierRelease]);
 
-  return { combos, isTyping };
+  return { combos, isTyping, keyPressCount };
 }
 
 // ─── Local key helpers (fallback only) ────────────────────────────────────
