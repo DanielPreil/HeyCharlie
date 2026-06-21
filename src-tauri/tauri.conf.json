@@ -14,11 +14,16 @@
     "windows": [
       {
         "title": "heycharlie",
-        "width": 800,
-        "height": 600,
+        "width": 1920,
+        "height": 1080,
+        "x": 0,
+        "y": 0,
         "transparent": true,
         "decorations": false,
-        "acceptFirstMouse": true
+        "acceptFirstMouse": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false
       }
     ],
     "security": {
