@@ -11,17 +11,34 @@ interface Props {
 
 // The dog head is ~137px below posY in screen coords (walk sprite top after scale).
 // We sit 36px above the head.
-const DOG_HEAD_OFFSET = 101;
+const DOG_HEAD_OFFSET = 85;
 
 export function KeyOverlay({ combos, isTyping, registerPositionUpdater }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     registerPositionUpdater((posX: number, posY: number) => {
-      if (!divRef.current) return;
-      // CANVAS_W / 2 = 108 → horizontal center of dog
-      divRef.current.style.left = `${posX + 108}px`;
-      divRef.current.style.top = `${posY + DOG_HEAD_OFFSET}px`;
+      const el = divRef.current;
+      if (!el) return;
+
+      const dogCenterX = posX + 108;
+      const pad = 8;
+
+      // Start centered over the dog
+      el.style.left = `${dogCenterX}px`;
+      el.style.top = `${posY + DOG_HEAD_OFFSET}px`;
+      el.style.transform = "translateX(-50%)";
+
+      // getBoundingClientRect forces a reflow → gives actual on-screen position
+      // then nudge left/right if the badge overflows the screen edge
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0) {
+        if (rect.left < pad) {
+          el.style.left = `${dogCenterX + (pad - rect.left)}px`;
+        } else if (rect.right > window.innerWidth - pad) {
+          el.style.left = `${dogCenterX - (rect.right - window.innerWidth + pad)}px`;
+        }
+      }
     });
   }, [registerPositionUpdater]);
 
