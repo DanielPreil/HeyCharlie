@@ -22,6 +22,7 @@ export function useClickThrough(canvasW: number, canvasH: number) {
   const isIgnoring = useRef(false);
   const isDragging = useRef(false);
   const dogBounds = useRef<DogBounds>({ posX: 0, posY: 0, canvasW, canvasH, scale: 0.75 });
+  const lastMousePos = useRef({ x: 0, y: 0 });
 
   const setIgnore = useCallback(async (ignore: boolean) => {
     if (isIgnoring.current === ignore) return;
@@ -46,8 +47,12 @@ export function useClickThrough(canvasW: number, canvasH: number) {
 
   const onDragEnd = useCallback(() => {
     isDragging.current = false;
-    // rdev mouse-move will correct this on next event
-    setIgnore(true);
+    // Check last known cursor position immediately — don't wait for the next
+    // rdev mouse-move event. Without this, dropping the dog and clicking again
+    // without moving the mouse would pass the click through (window stays in
+    // click-through mode because no mouse-move fires to correct it).
+    const over = isOverDog(lastMousePos.current.x, lastMousePos.current.y, dogBounds.current);
+    setIgnore(!over);
   }, [setIgnore]);
 
   useEffect(() => {
@@ -56,6 +61,7 @@ export function useClickThrough(canvasW: number, canvasH: number) {
 
     // rdev sends global mouse position — toggle hit-testing based on dog hitbox
     const unlistenMouse = listen<{ x: number; y: number }>("mouse-move", (e) => {
+      lastMousePos.current = e.payload;
       if (isDragging.current) return;
       const over = isOverDog(e.payload.x, e.payload.y, dogBounds.current);
       setIgnore(!over);
