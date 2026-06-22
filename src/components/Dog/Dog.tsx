@@ -313,12 +313,18 @@ export function Dog({ isTyping, keyPressCount, onPositionChange, onDragStart, on
       }).then((result) => {
         if (result) {
           const [bx, by, bw, bh] = result;
-          // Require the window to be large enough to walk in
           const minW = CW * scales.walk * 1.5;
           const minH = CH * scales.walk * 1.5;
           constrainedBounds = bw >= minW && bh >= minH ? { x: bx, y: by, w: bw, h: bh } : null;
         } else {
-          constrainedBounds = null; // dropped on desktop → back to full-screen
+          constrainedBounds = null;
+        }
+        // constrainedBounds just changed — if dog is walking above the new ground, drop it
+        if (state === "walk" || state === "typing") {
+          if (posY < getGroundY() - 1) {
+            state = "falling";
+            velY = 0;
+          }
         }
       }).catch(() => { constrainedBounds = null; });
     };

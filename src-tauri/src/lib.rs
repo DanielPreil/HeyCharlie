@@ -97,6 +97,37 @@ mod cg_windows {
     }
 }
 
+// Converts our NSWindow into an NSPanel with NSNonactivatingPanelMask so that
+// mousedown events are delivered to us without making our window key — preventing
+// focus from being stolen from the user's active app while dragging the dog.
+#[cfg(target_os = "macos")]
+fn make_window_non_activating(win: &tauri::WebviewWindow) {
+    use std::os::raw::{c_char, c_void};
+
+    #[link(name = "objc", kind = "dylib")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *mut c_void;
+        fn object_setClass(obj: *mut c_void, cls: *mut c_void) -> *mut c_void;
+        fn sel_registerName(name: *const c_char) -> *const c_void;
+        fn objc_msgSend(receiver: *mut c_void, sel: *const c_void, ...) -> usize;
+    }
+
+    unsafe {
+        let ns_win = win.ns_window().unwrap() as *mut c_void;
+
+        let panel_class = objc_getClass(b"NSPanel\0".as_ptr() as _);
+        if !panel_class.is_null() {
+            object_setClass(ns_win, panel_class);
+        }
+
+        // NSNonactivatingPanelMask = 1 << 7 = 128
+        let sel_get = sel_registerName(b"styleMask\0".as_ptr() as _);
+        let mask = objc_msgSend(ns_win, sel_get);
+        let sel_set = sel_registerName(b"setStyleMask:\0".as_ptr() as _);
+        objc_msgSend(ns_win, sel_set, mask | 128usize);
+    }
+}
+
 #[tauri::command]
 fn get_window_at_position(x: f64, y: f64) -> Option<[f64; 4]> {
     #[cfg(target_os = "macos")]
@@ -279,6 +310,8 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let win = app.get_webview_window("main").unwrap();
+            #[cfg(target_os = "macos")]
+            make_window_non_activating(&win);
             // resize window to actual primary monitor size (avoids using fullscreen mode)
             if let Ok(Some(monitor)) = win.current_monitor() {
                 let size = monitor.size();
