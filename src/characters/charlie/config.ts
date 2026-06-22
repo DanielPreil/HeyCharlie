@@ -2,8 +2,8 @@ import walkPng from "../../sprites/walk.png";
 import walkJson from "../../sprites/walk.json";
 import grabPng from "../../sprites/grab.png";
 import grabJson from "../../sprites/grab.json";
-import typingPng from "../../sprites/typing.png";
-import typingJson from "../../sprites/typing.json";
+import typePng from "../../sprites/type.png";
+import typeJson from "../../sprites/type.json";
 
 export interface FrameData {
   x: number;
@@ -20,41 +20,33 @@ export interface SpriteSheetJson {
 export interface StateSprite {
   png: string;
   json: SpriteSheetJson;
-  /** freeze on frame 0 instead of animating */
-  frozen?: boolean;
+  pixelScale?: number;
 }
 
 export interface CharacterConfig {
-  id: string;
-  name: string;
   /** pixel scale multiplier applied to raw sprite pixels */
   pixelScale: number;
   /** CSS scale applied to the canvas element */
   scales: Record<DogState, number>;
   canvasSize: { w: number; h: number };
-  states: Record<DogState, StateSprite>;
+  states: Record<"walk" | "type" | "grab", StateSprite>;
 }
 
-export type DogState = "walk" | "idle" | "typing" | "grab" | "falling";
+export type DogState = "walk" | "type" | "grab" | "fall";
 
 export const charlieConfig: CharacterConfig = {
-  id: "charlie",
-  name: "Charlie",
   pixelScale: 8,
   scales: {
     walk: 0.75,
-    idle: 0.75,
-    typing: 0.75,
+    type: 0.75,
     grab: 0.55,
-    falling: 0.55,
+    fall: 0.55,
   },
   canvasSize: { w: 216, h: 280 },
   states: {
     walk: { png: walkPng, json: walkJson },
-    idle: { png: walkPng, json: walkJson, frozen: true },
-    typing: { png: typingPng, json: typingJson },
+    type: { png: typePng, json: typeJson, pixelScale: 6 },
     grab: { png: grabPng, json: grabJson },
-    falling: { png: grabPng, json: grabJson },
   },
 };
 

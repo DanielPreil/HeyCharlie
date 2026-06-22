@@ -9,7 +9,7 @@ import "./App.css";
 const { canvasSize } = charlieConfig;
 
 export default function App() {
-  const { combos, isTyping, keyPressCount } = useKeyMonitor();
+  const { combos, isType, keyPressCount } = useKeyMonitor();
   const { updateDogPosition, onDragStart, onDragEnd } = useClickThrough(
     canvasSize.w,
     canvasSize.h
@@ -26,8 +26,8 @@ export default function App() {
   );
 
   const handlePositionChange = useCallback(
-    (x: number, y: number) => {
-      updateDogPosition(x, y);
+    (x: number, y: number, scale: number) => {
+      updateDogPosition(x, y, scale);
       positionUpdaterRef.current?.(x, y);
     },
     [updateDogPosition]
@@ -36,7 +36,7 @@ export default function App() {
   return (
     <div className="h-screen w-screen select-none" style={{ pointerEvents: "none" }}>
       <Dog
-        isTyping={isTyping}
+        isType={isType}
         keyPressCount={keyPressCount}
         onPositionChange={handlePositionChange}
         onDragStart={onDragStart}
@@ -44,7 +44,7 @@ export default function App() {
       />
       <KeyOverlay
         combos={combos}
-        isTyping={isTyping}
+        isType={isType}
         registerPositionUpdater={registerPositionUpdater}
       />
     </div>

@@ -28,8 +28,8 @@ export function KeyBadge({ combos }: Props) {
       {combos.map((combo, i) => {
         const opacity = i === combos.length - 1 ? 1 : Math.max(0.25, 0.3 + i * 0.2);
         return (
-          <span key={i} style={{ ...pill, opacity }}>
-            {combo.join("+")}
+          <span key={combo.id} style={{ ...pill, opacity }}>
+            {combo.keys.join("+")}
           </span>
         );
       })}

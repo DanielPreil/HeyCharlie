@@ -1,24 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
-// Keys that combine with others but don't show solo
 const MODIFIERS = new Set(["Shift", "Ctrl", "Alt", "Cmd"]);
 const IDLE_MS = 1500;
 const MAX_COMBOS = 4;
 
-// A combo is one simultaneous press: ["Cmd", "C"] or ["A"]
-export type KeyCombo = string[];
+export type KeyCombo = { id: number; keys: string[] };
 
 export function useKeyMonitor() {
   const [combos, setCombos] = useState<KeyCombo[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
+  const [isType, setIsType] = useState(false);
   const [keyPressCount, setKeyPressCount] = useState(0);
   const activeModifiers = useRef<Set<string>>(new Set());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasGlobal = useRef(false);
+  const comboId = useRef(0);
 
   const resetIdle = useCallback(() => {
-    setIsTyping(false);
+    setIsType(false);
     setCombos([]);
     activeModifiers.current.clear();
   }, []);
@@ -26,13 +25,12 @@ export function useKeyMonitor() {
   const onKeyPress = useCallback(
     (key: string) => {
       if (MODIFIERS.has(key)) {
-        // Track modifier state but don't show it alone
         activeModifiers.current.add(key);
         return;
       }
 
-      const combo: KeyCombo = [...activeModifiers.current, key];
-      setIsTyping(true);
+      const combo: KeyCombo = { id: comboId.current++, keys: [...activeModifiers.current, key] };
+      setIsType(true);
       setKeyPressCount((c) => c + 1);
       setCombos((prev) => [...prev.slice(-(MAX_COMBOS - 1)), combo]);
 
@@ -47,7 +45,8 @@ export function useKeyMonitor() {
   }, []);
 
   useEffect(() => {
-    // Global key events via Rust/rdev (works in any app)
+    let destroyed = false;
+
     const unlistenPress = listen<string>("key-press", (e) => {
       hasGlobal.current = true;
       onKeyPress(e.payload);
@@ -57,13 +56,6 @@ export function useKeyMonitor() {
       onModifierRelease(e.payload);
     });
 
-    // Fallback: no Accessibility permission → use local keydown only
-    const unlistenNoAccess = listen("no-accessibility", () => {
-      document.addEventListener("keydown", handleLocalKey);
-      document.addEventListener("keyup", handleLocalKeyUp);
-    });
-
-    // Local key handlers (only fire when this window is focused)
     const handleLocalKey = (e: KeyboardEvent) => {
       if (hasGlobal.current) return;
       const key = localKeyLabel(e);
@@ -76,7 +68,14 @@ export function useKeyMonitor() {
       if (mod) onModifierRelease(mod);
     };
 
+    const unlistenNoAccess = listen("no-accessibility", () => {
+      if (destroyed) return;
+      document.addEventListener("keydown", handleLocalKey);
+      document.addEventListener("keyup", handleLocalKeyUp);
+    });
+
     return () => {
+      destroyed = true;
       unlistenPress.then((f) => f());
       unlistenRelease.then((f) => f());
       unlistenNoAccess.then((f) => f());
@@ -86,7 +85,7 @@ export function useKeyMonitor() {
     };
   }, [onKeyPress, onModifierRelease]);
 
-  return { combos, isTyping, keyPressCount };
+  return { combos, isType, keyPressCount };
 }
 
 // ─── Local key helpers (fallback only) ────────────────────────────────────

@@ -1,19 +1,22 @@
 import { useRef, useEffect } from "react";
 import { KeyBadge } from "./KeyBadge";
 import type { KeyCombo } from "../../hooks/useKeyMonitor";
+import { charlieConfig } from "../../characters/charlie/config";
 
 interface Props {
   combos: KeyCombo[];
-  isTyping: boolean;
-  /** called each render frame — hook calls this to update overlay position */
+  isType: boolean;
   registerPositionUpdater: (update: (x: number, y: number) => void) => void;
 }
 
-// The dog head is ~137px below posY in screen coords (walk sprite top after scale).
-// We sit 36px above the head.
-const DOG_HEAD_OFFSET = 85;
+const CANVAS_HALF_W = charlieConfig.canvasSize.w / 2;
 
-export function KeyOverlay({ combos, isTyping, registerPositionUpdater }: Props) {
+// Badge sits above the dog's head. posY is the canvas top-left (CSS translate Y).
+// At walk scale (0.75), the visual top edge is posY + canvasH*(1-0.75)/2 ≈ posY+35.
+// 85px below posY lands roughly at ear level — a comfortable distance above the head.
+const DOG_BADGE_OFFSET_Y = 85;
+
+export function KeyOverlay({ combos, isType, registerPositionUpdater }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -21,15 +24,14 @@ export function KeyOverlay({ combos, isTyping, registerPositionUpdater }: Props)
       const el = divRef.current;
       if (!el) return;
 
-      const dogCenterX = posX + 108;
+      const dogCenterX = posX + CANVAS_HALF_W;
       const pad = 8;
 
-      // Start centered over the dog
       el.style.left = `${dogCenterX}px`;
-      el.style.top = `${posY + DOG_HEAD_OFFSET}px`;
+      el.style.top = `${posY + DOG_BADGE_OFFSET_Y}px`;
       el.style.transform = "translateX(-50%)";
 
-      // getBoundingClientRect forces a reflow → gives actual on-screen position
+      // getBoundingClientRect forces a reflow → gives actual on-screen position,
       // then nudge left/right if the badge overflows the screen edge
       const rect = el.getBoundingClientRect();
       if (rect.width > 0) {
@@ -42,7 +44,7 @@ export function KeyOverlay({ combos, isTyping, registerPositionUpdater }: Props)
     });
   }, [registerPositionUpdater]);
 
-  if (!isTyping || combos.length === 0) return null;
+  if (!isType || combos.length === 0) return null;
 
   return (
     <div
