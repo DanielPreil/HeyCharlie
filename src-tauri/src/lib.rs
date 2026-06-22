@@ -41,26 +41,28 @@ mod cg_windows {
         fn CFRelease(cf: CFTypeRef);
     }
 
-    /// Returns [x, y, width, height] (in logical/CSS pixels, top-left origin) of the
+    /// Returns [x, y, width, height, owner_pid] (logical/CSS pixels, top-left origin) of the
     /// topmost normal window at screen point (x, y), excluding our own process.
-    pub fn find_window_at(x: f64, y: f64, own_pid: u32) -> Option<[f64; 4]> {
+    /// The PID identifies the owning application and is used on the JS side to detect
+    /// when a different app's window has moved in front of the constrained window.
+    pub fn find_window_at(x: f64, y: f64, own_pid: u32) -> Option<[f64; 5]> {
         unsafe {
             let list = CGWindowListCopyWindowInfo(ON_SCREEN_ONLY | EXCLUDE_DESKTOP, 0);
             if list.is_null() { return None; }
 
             let n = CFArrayGetCount(list);
-            let mut found: Option<[f64; 4]> = None;
+            let mut found: Option<[f64; 5]> = None;
 
             for i in 0..n {
                 let info = CFArrayGetValueAtIndex(list, i);
                 if info.is_null() { continue; }
 
-                // Skip our own process
+                // Hoist PID so we can include it in the result
+                let mut window_pid: i32 = -1;
                 let pid_ref = CFDictionaryGetValue(info, kCGWindowOwnerPID);
                 if !pid_ref.is_null() {
-                    let mut pid: i32 = 0;
-                    CFNumberGetValue(pid_ref, CF_NUMBER_SINT32, &mut pid as *mut _ as _);
-                    if pid as u32 == own_pid { continue; }
+                    CFNumberGetValue(pid_ref, CF_NUMBER_SINT32, &mut window_pid as *mut _ as _);
+                    if window_pid as u32 == own_pid { continue; }
                 }
 
                 // Skip desktop (negative layers), menu bar / dock (layer > 5)
@@ -86,7 +88,7 @@ mod cg_windows {
                 if bw < MIN_WINDOW_PX || bh < MIN_WINDOW_PX { continue; }
 
                 if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
-                    found = Some([bx, by, bw, bh]);
+                    found = Some([bx, by, bw, bh, window_pid as f64]);
                     break;
                 }
             }
@@ -97,39 +99,54 @@ mod cg_windows {
     }
 }
 
-// Converts our NSWindow into an NSPanel with NSNonactivatingPanelMask so that
-// mousedown events are delivered to us without making our window key — preventing
-// focus from being stolen from the user's active app while dragging the dog.
+// Patches canBecomeKeyWindow → NO on the window's existing class so our
+// transparent overlay never steals keyboard focus from the user's active app.
+//
+// We add (or replace) the method directly on Tauri's NSWindow subclass —
+// no object_setClass needed. Mouse events are unaffected; they don't require
+// the window to be key.
+//
+// setup() is called from ObjC, so every fallible path returns instead of unwrap.
 #[cfg(target_os = "macos")]
 fn make_window_non_activating(win: &tauri::WebviewWindow) {
     use std::os::raw::{c_char, c_void};
 
+    extern "C" fn cannot_become_key(_: *mut c_void, _: *const c_void) -> u8 { 0 }
+
     #[link(name = "objc", kind = "dylib")]
     extern "C" {
-        fn objc_getClass(name: *const c_char) -> *mut c_void;
-        fn object_setClass(obj: *mut c_void, cls: *mut c_void) -> *mut c_void;
+        fn object_getClass(obj: *const c_void) -> *mut c_void;
         fn sel_registerName(name: *const c_char) -> *const c_void;
-        fn objc_msgSend(receiver: *mut c_void, sel: *const c_void, ...) -> usize;
+        fn class_addMethod(cls: *mut c_void, sel: *const c_void, imp: *const c_void, types: *const c_char) -> bool;
+        fn class_getInstanceMethod(cls: *mut c_void, sel: *const c_void) -> *mut c_void;
+        fn method_setImplementation(method: *mut c_void, imp: *const c_void) -> *const c_void;
     }
 
+    let ns_win = match win.ns_window() {
+        Ok(ptr) => ptr as *mut c_void,
+        Err(e) => { eprintln!("[heycharlie] ns_window() failed: {e}"); return; }
+    };
+
     unsafe {
-        let ns_win = win.ns_window().unwrap() as *mut c_void;
+        let cls = object_getClass(ns_win as *const _);
+        if cls.is_null() { return; }
 
-        let panel_class = objc_getClass(b"NSPanel\0".as_ptr() as _);
-        if !panel_class.is_null() {
-            object_setClass(ns_win, panel_class);
+        let sel = sel_registerName(b"canBecomeKeyWindow\0".as_ptr() as _);
+        let imp = cannot_become_key as usize as *const c_void;
+
+        // class_addMethod adds an override that shadows the superclass (returns true).
+        // Returns false only when the method already exists directly on THIS class —
+        // in that case replace the existing implementation.
+        let added = class_addMethod(cls, sel, imp, b"c@:\0".as_ptr() as _);
+        if !added {
+            let m = class_getInstanceMethod(cls, sel);
+            if !m.is_null() { method_setImplementation(m, imp); }
         }
-
-        // NSNonactivatingPanelMask = 1 << 7 = 128
-        let sel_get = sel_registerName(b"styleMask\0".as_ptr() as _);
-        let mask = objc_msgSend(ns_win, sel_get);
-        let sel_set = sel_registerName(b"setStyleMask:\0".as_ptr() as _);
-        objc_msgSend(ns_win, sel_set, mask | 128usize);
     }
 }
 
 #[tauri::command]
-fn get_window_at_position(x: f64, y: f64) -> Option<[f64; 4]> {
+fn get_window_at_position(x: f64, y: f64) -> Option<[f64; 5]> {
     #[cfg(target_os = "macos")]
     { cg_windows::find_window_at(x, y, std::process::id()) }
     #[cfg(not(target_os = "macos"))]
@@ -198,7 +215,7 @@ fn key_char(key: &Key) -> Option<&'static str> {
 
 fn event_label(event: &Event) -> Option<String> {
     if let EventType::KeyPress(ref key) = event.event_type {
-        // OS-provided char (respects QWERTZ, AZERTY, etc.) — works for normal typing
+        // OS-provided char (respects QWERTZ, AZERTY, etc.) — works for normal key input
         if let Some(ref uni) = event.unicode {
             if let Some(ref name) = uni.name {
                 let ch = name.trim();
@@ -301,7 +318,6 @@ fn start_input_listener(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![get_window_at_position])
         .setup(|app| {
             // Remove from Cmd+Tab switcher and Dock — heycharlie is a background overlay,
